@@ -1,0 +1,231 @@
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: mysql-pv
+  labels:
+    name: mysql-pv
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  claimRef:
+    namespace: default
+    name: mysql-data
+  storageClassName: local-storage
+  hostPath:
+    path: "/mnt/mysql_data_master"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: mysql-data
+  name: mysql-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+status: {}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: storage-uploads-pv
+  labels:
+    name: storage-uploads-pv
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  claimRef:
+    namespace: default
+    name: storage-uploads
+  storageClassName: local-storage
+  hostPath:
+    path: "/mnt/bookstack_storage_uploads"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: storage-uploads
+  name: storage-uploads
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+status: {}
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: uploads-pv
+  labels:
+    name: uploads-pv
+spec:
+  capacity:
+    storage: 20Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  claimRef:
+    namespace: default
+    name: uploads
+  storageClassName: local-storage
+  hostPath:
+    path: "/mnt/bookstack_uploads"
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  labels:
+    app: uploads
+  name: uploads
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 100Mi
+status: {}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  labels:
+    app: mysql
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  serviceName: "mysql"
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      terminationGracePeriodSeconds: 10
+      containers:
+        - env:
+            - name: MYSQL_DATABASE
+              value: bookstack
+            - name: MYSQL_PASSWORD
+              value: secret
+            - name: MYSQL_ROOT_PASSWORD
+              value: secret
+            - name: MYSQL_USER
+              value: bookstack
+          image: mysql:5.7.21
+          ports:
+            - containerPort: 3306
+          name: mysql
+          resources: {}
+          volumeMounts:
+            - mountPath: /var/lib/mysql
+              name: mysql-data
+      restartPolicy: Always
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: mysql
+  name: mysql
+spec:
+  ports:
+    - name: mysql
+      port: 3306
+      targetPort: 3306
+  selector:
+    app: mysql
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bookstack
+spec:
+  selector:
+    matchLabels:
+     app: bookstack
+  replicas: 1
+  template:
+    metadata:
+      labels:
+        app: bookstack
+    spec:
+      containers:
+        - env:
+            - name: DB_DATABASE
+              value: bookstack
+            - name: DB_HOST
+              value: mysql:3306
+            - name: DB_PASSWORD
+              value: secret
+            - name: DB_USERNAME
+              value: bookstack
+          image: solidnerd/bookstack:latest
+          name: bookstack
+          ports:
+            - containerPort: 80
+          resources: {}
+          volumeMounts:
+            - mountPath: /var/www/bookstack/public/uploads
+              name: uploads
+            - mountPath: /var/www/bookstack/public/storage
+              name: storage-uploads
+      restartPolicy: Always
+      volumes:
+        - name: uploads
+          persistentVolumeClaim:
+            claimName: uploads
+        - name: storage-uploads
+          persistentVolumeClaim:
+            claimName: storage-uploads
+status: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  labels:
+    app: bookstack
+  name: bookstack
+spec:
+  ports:
+    - name: "8080"
+      port: 8080
+      targetPort: 80
+  selector:
+    app: bookstack
+---
+apiVersion: extensions/v1beta1
+kind: Ingress
+metadata:
+  name: bookstack-ingress
+  annotations:
+    ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - host: bookstack.myhost.io
+      http:
+        paths:
+          - path: /
+            backend:
+              serviceName: bookstack
+              servicePort: 8080
